@@ -9,11 +9,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, status
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from sqlalchemy import Column, DateTime, Integer, String, Text, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 logging.basicConfig(level=logging.INFO)
@@ -211,7 +211,9 @@ async def update_profile(user_id: str, body: UpdateProfileRequest) -> UserProfil
         return _user_to_response(user)
 
 
-@app.post("/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED, tags=["Tasks"])
+@app.post(
+    "/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED, tags=["Tasks"]
+)
 async def create_task(body: CreateTaskRequest) -> TaskResponse:
     task = TaskModel(
         user_id=body.user_id,
