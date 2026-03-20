@@ -1,0 +1,11 @@
+# Lightweight test dependencies for voice-video service.
+# The full requirements.txt (openai-whisper, yt-dlp) are NOT needed for unit
+# tests because whisper and yt_dlp are mocked via sys.modules injection.
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+pydantic==2.8.2
+pydantic-settings==2.3.4
+python-multipart==0.0.9
+pytest==8.2.2
+pytest-asyncio==0.23.8
+httpx==0.27.0

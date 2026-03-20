@@ -3,15 +3,26 @@ Unit tests for the Voice/Video service with mocked Whisper calls.
 """
 
 import io
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-# Mock whisper at import time so it doesn't try to load a real model
-with patch("whisper.load_model") as _mock_load:
-    _mock_load.return_value = MagicMock()
-    from src.main import app, _transcribe_file, get_whisper_model
+# Inject a fake 'whisper' module so src.main can be imported without the
+# heavy openai-whisper package actually being installed in the test env.
+_fake_whisper = types.ModuleType("whisper")
+_fake_whisper.load_model = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
+_fake_whisper.Whisper = MagicMock  # type: ignore[attr-defined]
+sys.modules.setdefault("whisper", _fake_whisper)
+
+# Similarly mock yt_dlp
+_fake_yt_dlp = types.ModuleType("yt_dlp")
+_fake_yt_dlp.YoutubeDL = MagicMock  # type: ignore[attr-defined]
+sys.modules.setdefault("yt_dlp", _fake_yt_dlp)
+
+from src.main import app, _transcribe_file, get_whisper_model  # noqa: E402
 
 client = TestClient(app)
 
