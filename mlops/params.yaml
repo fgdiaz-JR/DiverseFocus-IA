@@ -1,0 +1,15 @@
+prepare:
+  val_split: 0.1
+  test_split: 0.1
+  random_seed: 42
+
+train:
+  base_model: t5-small
+  num_epochs: 3
+  batch_size: 8
+  learning_rate: 0.00005
+  max_source_length: 512
+  max_target_length: 128
+
+evaluate:
+  batch_size: 8
