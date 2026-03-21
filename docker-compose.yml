@@ -1,0 +1,104 @@
+version: "3.9"
+
+networks:
+  diversefocus-net:
+    driver: bridge
+
+volumes:
+  user-profile-data:
+
+services:
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    image: diversefocus-ia/api-gateway:local
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      AI_INFERENCE_URL: "http://ai-inference:8001"
+      VOICE_VIDEO_URL: "http://voice-video:8002"
+      USER_PROFILE_URL: "http://user-profile:8003"
+    depends_on:
+      ai-inference:
+        condition: service_healthy
+      voice-video:
+        condition: service_healthy
+      user-profile:
+        condition: service_healthy
+    networks:
+      - diversefocus-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  ai-inference:
+    build:
+      context: ./services/ai-inference
+      dockerfile: Dockerfile
+    image: diversefocus-ia/ai-inference:local
+    container_name: ai-inference
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    networks:
+      - diversefocus-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  voice-video:
+    build:
+      context: ./services/voice-video
+      dockerfile: Dockerfile
+    image: diversefocus-ia/voice-video:local
+    container_name: voice-video
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    networks:
+      - diversefocus-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  user-profile:
+    build:
+      context: ./services/user-profile
+      dockerfile: Dockerfile
+    image: diversefocus-ia/user-profile:local
+    container_name: user-profile
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "sqlite+aiosqlite:///./data/users.db"
+    volumes:
+      - user-profile-data:/app/data
+    networks:
+      - diversefocus-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped

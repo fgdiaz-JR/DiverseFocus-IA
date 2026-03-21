@@ -1,0 +1,220 @@
+name: CI/CD Pipeline
+
+# Trigger only when service code, MLOps scripts, or the workflow itself changes.
+# Per-service path filtering inside the workflow (via dorny/paths-filter) avoids
+# running lint/test/build for services that were not touched.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'mlops/**'
+      - '.github/workflows/ci-cd.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'mlops/**'
+      - '.github/workflows/ci-cd.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/fgdiaz-jr/diversefocus-ia
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1: Detect which service directories have changed
+  # ─────────────────────────────────────────────────────────────────────────────
+  changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # JSON array of service names whose directories changed, e.g. ["api-gateway","ai-inference"]
+      services: ${{ steps.filter.outputs.changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed service directories
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api-gateway:
+              - 'services/api-gateway/**'
+            ai-inference:
+              - 'services/ai-inference/**'
+              - 'mlops/**'
+            voice-video:
+              - 'services/voice-video/**'
+            user-profile:
+              - 'services/user-profile/**'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2: Lint (flake8) + Test — only for services that changed
+  # ─────────────────────────────────────────────────────────────────────────────
+  lint-and-test:
+    name: Lint & Test — ${{ matrix.service }}
+    needs: changes
+    # Skip entirely when no service directories changed
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Dynamically built from the list of changed services
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+        include:
+          - service: api-gateway
+            path: services/api-gateway
+          - service: ai-inference
+            path: services/ai-inference
+          - service: voice-video
+            path: services/voice-video
+          - service: user-profile
+            path: services/user-profile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.service }}-${{ hashFiles(format('{0}/requirements.txt', matrix.path)) }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.service }}-
+            ${{ runner.os }}-pip-
+
+      - name: Install system dependencies (voice-video only)
+        if: matrix.service == 'voice-video'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install Python dependencies
+        working-directory: ${{ matrix.path }}
+        run: |
+          python -m pip install --upgrade pip
+          # Use test-requirements.txt when present (e.g. voice-video avoids heavy ML deps)
+          if [ -f test-requirements.txt ]; then
+            pip install -r test-requirements.txt
+          else
+            pip install -r requirements.txt
+          fi
+          pip install pytest pytest-asyncio httpx pytest-httpx aiosqlite flake8
+
+      - name: Lint with flake8
+        working-directory: ${{ matrix.path }}
+        run: |
+          flake8 src/ --max-line-length=100 --extend-ignore=E203,W503
+
+      - name: Run tests
+        working-directory: ${{ matrix.path }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Use repository secret when available; fall back to a run-scoped value
+          # so that no plaintext credential is ever embedded in this file.
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET || format('ci-{0}-{1}', github.run_id, github.run_attempt) }}
+          PYTHONPATH: "."
+        run: |
+          pytest tests/ --tb=short
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 3: Build → Trivy scan → Push (main branch only, after tests pass)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-scan-push:
+    name: Build, Scan & Push — ${{ matrix.service }}
+    needs: [changes, lint-and-test]
+    # Deploy only to main, only when tests passed, only for changed services
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.services != '[]' &&
+      needs.lint-and-test.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.changes.outputs.services) }}
+        include:
+          - service: api-gateway
+            path: services/api-gateway
+          - service: ai-inference
+            path: services/ai-inference
+          - service: voice-video
+            path: services/voice-video
+          - service: user-profile
+            path: services/user-profile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── MLOps: pull trained model artifacts before building ai-inference ──────
+      - name: Set up Python for DVC (ai-inference only)
+        if: matrix.service == 'ai-inference'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pull trained models via DVC (ai-inference only)
+        if: matrix.service == 'ai-inference'
+        working-directory: mlops
+        env:
+          DVC_GDRIVE_CREDENTIALS_DATA: ${{ secrets.DVC_GDRIVE_CREDENTIALS_DATA }}
+        run: |
+          pip install dvc
+          # Continue with a warning if the remote is not yet configured
+          dvc pull || echo "::warning::DVC pull incomplete — configure a DVC remote and credentials to include trained model artifacts in the image"
+
+      # ── Docker build (local load, not pushed yet) ─────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.path }}
+          # Load into the local Docker daemon so Trivy can scan it before it is pushed
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # ── Security scan — block push on CRITICAL or HIGH findings ───────────────
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      # ── Push only after the scan passes ──────────────────────────────────────
+      - name: Push image to GHCR
+        run: docker push ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}

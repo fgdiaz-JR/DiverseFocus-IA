@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: diversefocus
+  labels:
+    app.kubernetes.io/name: diversefocus-ia
+    app.kubernetes.io/managed-by: kubectl

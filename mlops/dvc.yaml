@@ -1,0 +1,45 @@
+stages:
+  prepare_data:
+    cmd: python scripts/prepare_data.py
+    deps:
+      - scripts/prepare_data.py
+      - data/raw/
+    outs:
+      - data/processed/train.csv
+      - data/processed/val.csv
+      - data/processed/test.csv
+    params:
+      - params.yaml:
+          - prepare.val_split
+          - prepare.test_split
+          - prepare.random_seed
+
+  train_model:
+    cmd: python scripts/train_model.py
+    deps:
+      - scripts/train_model.py
+      - data/processed/train.csv
+      - data/processed/val.csv
+    outs:
+      - models/checkpoint/
+    params:
+      - params.yaml:
+          - train.base_model
+          - train.num_epochs
+          - train.batch_size
+          - train.learning_rate
+          - train.max_source_length
+          - train.max_target_length
+
+  evaluate_model:
+    cmd: python scripts/evaluate_model.py
+    deps:
+      - scripts/evaluate_model.py
+      - models/checkpoint/
+      - data/processed/test.csv
+    metrics:
+      - metrics/scores.json:
+          cache: false
+    params:
+      - params.yaml:
+          - evaluate.batch_size

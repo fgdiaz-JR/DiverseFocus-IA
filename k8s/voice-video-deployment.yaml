@@ -1,0 +1,70 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voice-video
+  namespace: diversefocus
+  labels:
+    app: voice-video
+    version: "1.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: voice-video
+  template:
+    metadata:
+      labels:
+        app: voice-video
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: voice-video
+          image: ghcr.io/fgdiaz-jr/diversefocus-ia/voice-video:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8002
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: diversefocus-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: voice-video
+  namespace: diversefocus
+  labels:
+    app: voice-video
+spec:
+  type: ClusterIP
+  selector:
+    app: voice-video
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8002
+      targetPort: 8002
