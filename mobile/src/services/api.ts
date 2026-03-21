@@ -109,12 +109,74 @@ async function simplifyText(text: string, level: string = 'medium'): Promise<Sim
   return response.data;
 }
 
+function getAudioMimeTypeAndFileName(
+  fileUri: string,
+  originalName: string,
+): { mimeType: string; fileName: string } {
+  const hasExtension = (name: string): boolean => /\.[^./]+$/.test(name);
+
+  const extractExtension = (value: string): string | null => {
+    if (!value) {
+      return null;
+    }
+    try {
+      const path = value.split('?')[0].split('#')[0];
+      const lastSegment = path.split('/').pop() ?? '';
+      const match = lastSegment.match(/\.([^./]+)$/);
+      return match ? match[1].toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  let extension: string | null = extractExtension(originalName);
+  if (!extension) {
+    extension = extractExtension(fileUri);
+  }
+
+  let mimeType = 'audio/mpeg';
+  if (extension) {
+    switch (extension) {
+      case 'mp3':
+        mimeType = 'audio/mpeg';
+        break;
+      case 'm4a':
+        mimeType = 'audio/mp4';
+        break;
+      case 'wav':
+        mimeType = 'audio/wav';
+        break;
+      case 'ogg':
+        mimeType = 'audio/ogg';
+        break;
+      case 'webm':
+        mimeType = 'audio/webm';
+        break;
+      case 'aac':
+        mimeType = 'audio/aac';
+        break;
+      default:
+        mimeType = 'audio/mpeg';
+        break;
+    }
+  }
+
+  let normalizedName = originalName;
+  if (!hasExtension(normalizedName) && extension) {
+    normalizedName = `${normalizedName}.${extension}`;
+  }
+
+  return { mimeType, fileName: normalizedName };
+}
+
 async function transcribeAudio(fileUri: string, fileName: string): Promise<TranscriptResponse> {
+  const { mimeType, fileName: normalizedFileName } = getAudioMimeTypeAndFileName(fileUri, fileName);
+
   const formData = new FormData();
   formData.append('file', {
     uri: fileUri,
-    name: fileName,
-    type: 'audio/mpeg',
+    name: normalizedFileName,
+    type: mimeType,
   } as unknown as Blob);
 
   const response = await axiosInstance.post<TranscriptResponse>(
